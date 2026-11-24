@@ -3,13 +3,16 @@ package com.renzo.idscanner;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /** Local-only diagnostic records, separated by app package and declared provider. */
 final class RecordStore {
     static final String LEGACY_PROVIDER = "legacy";
     private static final String SEP = "::provider::";
+    private static final String ROOT_FOUND = "root-found::";
     private final SharedPreferences prefs;
 
     RecordStore(Context c) {
@@ -45,6 +48,39 @@ final class RecordStore {
         String legacy = prefs.getString(pkg, null);
         if (legacy != null) out.put(LEGACY_PROVIDER, legacy);
         return out;
+    }
+
+    boolean markRootProvider(String pkg, String provider) {
+        if (pkg == null || pkg.isEmpty() || !Provider.isSupported(provider)) return false;
+        return prefs.edit().putBoolean(pkg + SEP + ROOT_FOUND + provider, true).commit();
+    }
+
+    void clearRootProviders(String pkg) {
+        if (pkg == null || pkg.isEmpty()) return;
+        String prefix = pkg + SEP + ROOT_FOUND;
+        SharedPreferences.Editor editor = prefs.edit();
+        for (String key : prefs.getAll().keySet()) {
+            if (key.startsWith(prefix)) editor.remove(key);
+        }
+        editor.commit();
+    }
+
+    List<String> getRootProviders(String pkg) {
+        List<String> out = new ArrayList<>();
+        if (pkg == null || pkg.isEmpty()) return out;
+        String prefix = pkg + SEP + ROOT_FOUND;
+        Map<String, ?> all = prefs.getAll();
+        for (Map.Entry<String, ?> entry : all.entrySet()) {
+            if (entry.getKey().startsWith(prefix) && Boolean.TRUE.equals(entry.getValue())) {
+                String provider = entry.getKey().substring(prefix.length());
+                if (Provider.isSupported(provider) && !out.contains(provider)) out.add(provider);
+            }
+        }
+        List<String> ordered = new ArrayList<>();
+        for (String provider : Provider.ORDERED) {
+            if (out.contains(provider)) ordered.add(provider);
+        }
+        return ordered;
     }
 
     boolean hasAny(String pkg) {

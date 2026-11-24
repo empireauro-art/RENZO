@@ -44,4 +44,7 @@ android {
     dependenciesInfo { includeInApk = false; includeInBundle = false }
     lint { abortOnError false }
 }
-// No dependencies: platform SDK only.
+
+dependencies {
+    implementation 'com.google.android.gms:play-services-ads-identifier:18.3.0'
+}
