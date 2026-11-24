@@ -89,3 +89,13 @@ java -cp /tmp/renzo-tests com.renzo.idscanner.RootAttributionScannerTest
 8. Tap **SCAN WITH ROOT** and respond to the Superuser prompt if the device has a root manager. Verify the status and any white copyable AppsFlyer / Singular labels.
 
 The Android app must still be compiled and tested on an emulator or physical Android device before calling the APK complete.
+
+## Selecting and copying identifiers
+
+Tap an app icon to select it; selection does not copy anything automatically. The three compact cards at the top update for the selected app:
+
+1. **GAID** — this device/profile's Google Advertising ID. Tap to copy it.
+2. **AppsFlyer ID** — the selected app's stored AppsFlyer installation identifier. Tap to copy it.
+3. **Full export** — tap to copy the four fields in this exact order: `GAID|ID|AID|UA`.
+
+The full export is only enabled when all four values are available. GAID is device/profile-level, while the AppsFlyer ID and app Android ID are taken from the selected app's stored record. The UI uses Android's built-in views and drawables; no additional UI library is added.

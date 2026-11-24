@@ -8,9 +8,12 @@ import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.text.TextUtils;
@@ -18,7 +21,6 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
-import android.widget.Button;
 import android.widget.GridView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -37,10 +39,13 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
-    private static final int BG = Color.rgb(18, 18, 18);
-    private static final int FG = Color.rgb(235, 235, 235);
-    private static final int MUTED = Color.rgb(160, 160, 160);
-    private static final int ACCENT = Color.rgb(220, 160, 55);
+    private static final int BG = Color.rgb(7, 8, 10);
+    private static final int SURFACE = Color.rgb(19, 21, 25);
+    private static final int FG = Color.rgb(239, 241, 244);
+    private static final int MUTED = Color.rgb(139, 145, 154);
+    private static final int GOLD = Color.rgb(226, 177, 83);
+    private static final int GREEN = Color.rgb(83, 194, 125);
+    private static final int BLUE = Color.rgb(105, 183, 222);
 
     private static final class Item {
         String label, pkg, category, sourceDir;
@@ -50,15 +55,30 @@ public class MainActivity extends Activity {
         List<String> rootProviders = Collections.emptyList();
     }
 
+    private static final class MetricCard {
+        final LinearLayout root;
+        final TextView value;
+        MetricCard(LinearLayout root, TextView value) {
+            this.root = root;
+            this.value = value;
+        }
+    }
+
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final List<Item> items = new ArrayList<>();
     private RecordStore store;
     private BaseAdapter adapter;
     private TextView rootStatus;
-    private Button rootButton;
-    private TextView gaidText;
-    private Button gaidRefreshButton;
+    private TextView rootButton;
+    private TextView selectedAppText;
+    private TextView gaidRefresh;
+    private MetricCard gaidCard;
+    private MetricCard appsFlyerCard;
+    private MetricCard fullExportCard;
     private volatile String gaidValue;
+    private Item selectedItem;
+    private String selectedAppsFlyerId;
+    private String selectedFullExport;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -68,58 +88,105 @@ public class MainActivity extends Activity {
 
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
+        page.setPadding(dp(8), dp(3), dp(8), 0);
         page.setBackgroundColor(BG);
 
-        // The Advertising ID belongs to this Android device/profile, not to an
-        // individual game. Read it through the official Google Play services API.
-        LinearLayout gaidBar = new LinearLayout(this);
-        gaidBar.setGravity(Gravity.CENTER_VERTICAL);
-        gaidBar.setPadding((int) (12 * d), (int) (5 * d), (int) (8 * d), (int) (3 * d));
-        gaidBar.setBackgroundColor(Color.rgb(30, 30, 30));
+        // Compact RENZO wordmark. Equal side spaces keep the title visually centered.
+        LinearLayout brandRow = new LinearLayout(this);
+        brandRow.setGravity(Gravity.CENTER_VERTICAL);
+        brandRow.setPadding(dp(2), dp(2), dp(2), dp(3));
+        TextView leftBalance = new TextView(this);
+        brandRow.addView(leftBalance, new LinearLayout.LayoutParams(dp(34), dp(34)));
 
-        gaidText = new TextView(this);
-        gaidText.setText("DEVICE GAID: READING...");
-        gaidText.setTextColor(FG);
-        gaidText.setTextSize(10);
-        gaidText.setMaxLines(2);
-        gaidText.setOnClickListener(v -> copyGaid());
-        gaidBar.addView(gaidText, new LinearLayout.LayoutParams(0,
+        LinearLayout brand = new LinearLayout(this);
+        brand.setOrientation(LinearLayout.VERTICAL);
+        brand.setGravity(Gravity.CENTER);
+        TextView brandTitle = new TextView(this);
+        brandTitle.setText("RENZO");
+        brandTitle.setTextColor(GOLD);
+        brandTitle.setTextSize(23);
+        brandTitle.setTypeface(Typeface.create("sans-serif-black", Typeface.NORMAL));
+        brandTitle.setLetterSpacing(0.13f);
+        brandTitle.setGravity(Gravity.CENTER);
+        brand.addView(brandTitle);
+        TextView brandSub = new TextView(this);
+        brandSub.setText("ID SCANNER");
+        brandSub.setTextColor(MUTED);
+        brandSub.setTextSize(7);
+        brandSub.setLetterSpacing(0.28f);
+        brandSub.setGravity(Gravity.CENTER);
+        brand.addView(brandSub);
+        brandRow.addView(brand, new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        gaidRefreshButton = new Button(this);
-        gaidRefreshButton.setText("REFRESH GAID");
-        gaidRefreshButton.setTextSize(9);
-        gaidRefreshButton.setAllCaps(false);
-        gaidRefreshButton.setOnClickListener(v -> refreshGaid());
-        gaidBar.addView(gaidRefreshButton, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, (int) (40 * d)));
-        page.addView(gaidBar);
+        gaidRefresh = new TextView(this);
+        gaidRefresh.setText("↻");
+        gaidRefresh.setTextColor(GOLD);
+        gaidRefresh.setTextSize(22);
+        gaidRefresh.setGravity(Gravity.CENTER);
+        gaidRefresh.setBackground(rounded(SURFACE, Color.rgb(70, 57, 34), dp(9)));
+        gaidRefresh.setOnClickListener(v -> refreshGaid());
+        brandRow.addView(gaidRefresh, new LinearLayout.LayoutParams(dp(34), dp(34)));
+        page.addView(brandRow);
+
+        // Three compact copy targets: device GAID, selected game's AppsFlyer ID, full export.
+        LinearLayout cards = new LinearLayout(this);
+        cards.setOrientation(LinearLayout.HORIZONTAL);
+        cards.setGravity(Gravity.CENTER_VERTICAL);
+        cards.setPadding(0, dp(4), 0, dp(2));
+
+        gaidCard = createMetricCard("01  GAID", "READING DEVICE ID", GOLD,
+                v -> copyGaid());
+        appsFlyerCard = createMetricCard("02  APPSFLYER ID", "SELECT A GAME", BLUE,
+                v -> copySelectedAppsFlyerId());
+        fullExportCard = createMetricCard("03  FULL EXPORT", "GAID | ID | AID | UA", GOLD,
+                v -> copyFullExport());
+        addCard(cards, gaidCard, 0);
+        addCard(cards, appsFlyerCard, 1);
+        addCard(cards, fullExportCard, 2);
+        page.addView(cards);
+
+        selectedAppText = new TextView(this);
+        selectedAppText.setText("SELECT A GAME TO LOAD ITS IDENTIFIERS");
+        selectedAppText.setTextColor(MUTED);
+        selectedAppText.setTextSize(8);
+        selectedAppText.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        selectedAppText.setGravity(Gravity.CENTER_VERTICAL);
+        selectedAppText.setSingleLine(true);
+        selectedAppText.setEllipsize(TextUtils.TruncateAt.END);
+        selectedAppText.setPadding(dp(3), dp(3), dp(3), dp(1));
+        page.addView(selectedAppText, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(19)));
 
         LinearLayout rootBar = new LinearLayout(this);
         rootBar.setGravity(Gravity.CENTER_VERTICAL);
-        rootBar.setPadding((int) (12 * d), (int) (8 * d), (int) (8 * d), (int) (4 * d));
+        rootBar.setPadding(dp(3), dp(2), dp(1), dp(4));
         rootStatus = new TextView(this);
-        rootStatus.setText("ROOT: NOT CHECKED");
+        rootStatus.setText("ROOT NOT CHECKED");
         rootStatus.setTextColor(MUTED);
-        rootStatus.setTextSize(11);
+        rootStatus.setTextSize(9);
         rootStatus.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        rootBar.addView(rootStatus, new LinearLayout.LayoutParams(0, (int) (40 * d), 1f));
+        rootBar.addView(rootStatus, new LinearLayout.LayoutParams(0, dp(34), 1f));
 
-        rootButton = new Button(this);
-        rootButton.setText("SCAN WITH ROOT");
-        rootButton.setTextSize(10);
-        rootButton.setAllCaps(false);
+        rootButton = new TextView(this);
+        rootButton.setText("SCAN ROOT  ›");
+        rootButton.setTextColor(GOLD);
+        rootButton.setTextSize(9);
+        rootButton.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        rootButton.setGravity(Gravity.CENTER);
+        rootButton.setPadding(dp(11), 0, dp(11), 0);
+        rootButton.setBackground(rounded(SURFACE, Color.rgb(78, 62, 36), dp(9)));
         rootButton.setOnClickListener(v -> scanWithRoot());
         rootBar.addView(rootButton, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, (int) (40 * d)));
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(34)));
         page.addView(rootBar);
 
         GridView grid = new GridView(this);
         grid.setBackgroundColor(BG);
         grid.setNumColumns(4);
-        grid.setVerticalSpacing((int) (8 * d));
-        grid.setHorizontalSpacing((int) (2 * d));
-        grid.setPadding((int) (6 * d), (int) (4 * d), (int) (6 * d), (int) (8 * d));
+        grid.setVerticalSpacing(dp(7));
+        grid.setHorizontalSpacing(dp(2));
+        grid.setPadding(dp(2), dp(3), dp(2), dp(8));
         grid.setClipToPadding(false);
         grid.setSelector(android.R.color.transparent);
         adapter = new Adapter(d);
@@ -127,21 +194,62 @@ public class MainActivity extends Activity {
         grid.setOnItemClickListener((p, v, pos, id) -> onAppTap(items.get(pos)));
         page.addView(grid, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
         setContentView(page);
         getWindow().setStatusBarColor(BG);
         getWindow().setNavigationBarColor(BG);
         refreshGaid();
     }
 
+    private MetricCard createMetricCard(String title, String initial, int accent,
+                                        View.OnClickListener listener) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setGravity(Gravity.CENTER_VERTICAL);
+        box.setPadding(dp(7), dp(6), dp(6), dp(5));
+        box.setBackground(ripple(SURFACE, accent, dp(10)));
+        box.setElevation(dp(1));
+        box.setClickable(true);
+        box.setFocusable(true);
+        box.setOnClickListener(listener);
+
+        TextView heading = new TextView(this);
+        heading.setText(title);
+        heading.setTextColor(accent);
+        heading.setTextSize(7.5f);
+        heading.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        heading.setSingleLine(true);
+        heading.setEllipsize(TextUtils.TruncateAt.END);
+        box.addView(heading, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView value = new TextView(this);
+        value.setText(initial);
+        value.setTextColor(FG);
+        value.setTextSize(9);
+        value.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        value.setMaxLines(2);
+        value.setEllipsize(TextUtils.TruncateAt.END);
+        value.setPadding(0, dp(4), 0, 0);
+        box.addView(value, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return new MetricCard(box, value);
+    }
+
+    private void addCard(LinearLayout row, MetricCard card, int index) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(67), 1f);
+        if (index > 0) lp.leftMargin = dp(5);
+        row.addView(card.root, lp);
+    }
+
     /** Reads this device/profile's GAID through Google Play services off the UI thread. */
     private void refreshGaid() {
-        if (gaidText == null || gaidRefreshButton == null) return;
-        gaidText.setText("DEVICE GAID: READING...");
-        gaidText.setTextColor(MUTED);
-        gaidRefreshButton.setEnabled(false);
+        if (gaidCard == null || gaidRefresh == null) return;
+        gaidCard.value.setText("READING DEVICE ID...");
+        gaidCard.value.setTextColor(MUTED);
+        gaidRefresh.setEnabled(false);
         io.execute(() -> {
             String id = null;
-            String resultText;
             try {
                 com.google.android.gms.ads.identifier.AdvertisingIdClient.Info info =
                         com.google.android.gms.ads.identifier.AdvertisingIdClient
@@ -150,33 +258,103 @@ public class MainActivity extends Activity {
                 if (!TextUtils.isEmpty(fetched)
                         && !"00000000-0000-0000-0000-000000000000".equals(fetched)) {
                     id = fetched;
-                    resultText = "DEVICE GAID: " + fetched + "  •  TAP TO COPY";
-                } else {
-                    resultText = "DEVICE GAID: UNAVAILABLE (ZEROED / RESET)";
                 }
-            } catch (Exception e) {
-                resultText = "DEVICE GAID: UNAVAILABLE (GOOGLE PLAY SERVICES)";
+            } catch (Exception ignored) {
+                // Play services may be absent or the advertising ID may be unavailable.
             }
             final String finalId = id;
-            final String finalText = resultText;
             runOnUiThread(() -> {
-                if (isFinishing() || isDestroyed() || gaidText == null) return;
+                if (isFinishing() || isDestroyed() || gaidCard == null) return;
                 gaidValue = finalId;
-                gaidText.setText(finalText);
-                gaidText.setTextColor(finalId == null ? MUTED : Color.rgb(85, 190, 115));
-                gaidRefreshButton.setEnabled(true);
+                gaidCard.value.setText(finalId == null ? "NOT AVAILABLE" : finalId);
+                gaidCard.value.setTextColor(finalId == null ? MUTED : GREEN);
+                gaidRefresh.setEnabled(true);
+                renderSelection();
             });
         });
     }
 
+    private void onAppTap(Item item) {
+        selectedItem = item;
+        renderSelection();
+        if (adapter != null) adapter.notifyDataSetChanged();
+    }
+
+    /** Refreshes the three top cards whenever the selected app or device GAID changes. */
+    private void renderSelection() {
+        if (appsFlyerCard == null || fullExportCard == null || selectedAppText == null) return;
+        selectedAppsFlyerId = null;
+        selectedFullExport = null;
+
+        if (selectedItem == null) {
+            appsFlyerCard.value.setText("SELECT A GAME");
+            appsFlyerCard.value.setTextColor(MUTED);
+            fullExportCard.value.setText("GAID | ID | AID | UA");
+            fullExportCard.value.setTextColor(MUTED);
+            selectedAppText.setText("SELECT A GAME TO LOAD ITS IDENTIFIERS");
+            selectedAppText.setTextColor(MUTED);
+            return;
+        }
+
+        String raw = store.get(selectedItem.pkg, Provider.APPSFLYER);
+        selectedAppsFlyerId = SelectionExport.appsFlyerId(raw);
+        selectedFullExport = SelectionExport.build(gaidValue, raw);
+
+        if (selectedAppsFlyerId == null) {
+            appsFlyerCard.value.setText("NO APPSFLYER ID");
+            appsFlyerCard.value.setTextColor(MUTED);
+            fullExportCard.value.setText(raw == null
+                    ? "NO APPSFLYER RECORD" : "RECORD INCOMPLETE");
+            fullExportCard.value.setTextColor(MUTED);
+            String detail = selectedItem.rootProviders.contains(Provider.APPSFLYER)
+                    ? "APPSFLYER FILE FOUND • NO ID VALUE"
+                    : selectedItem.detectedProviders.contains(Provider.APPSFLYER)
+                    ? "APPSFLYER SDK FOUND • RUN ROOT SCAN"
+                    : "NO APPSFLYER DATA FOUND";
+            selectedAppText.setText(selectedItem.label + "  •  " + detail);
+            selectedAppText.setTextColor(MUTED);
+        } else {
+            appsFlyerCard.value.setText(selectedAppsFlyerId);
+            appsFlyerCard.value.setTextColor(FG);
+            if (selectedFullExport != null) {
+                fullExportCard.value.setText(compact(selectedFullExport, 34));
+                fullExportCard.value.setTextColor(GOLD);
+            } else {
+                fullExportCard.value.setText("WAITING FOR GAID / AID / UA");
+                fullExportCard.value.setTextColor(MUTED);
+            }
+            selectedAppText.setText(selectedItem.label + "  •  APPSFLYER DATA READY");
+            selectedAppText.setTextColor(GREEN);
+        }
+    }
+
+    private String compact(String value, int limit) {
+        if (value == null || value.length() <= limit) return value;
+        return value.substring(0, limit - 1) + "…";
+    }
+
     private void copyGaid() {
-        if (TextUtils.isEmpty(gaidValue)) {
-            Toast.makeText(this, "GAID is not available on this device", Toast.LENGTH_SHORT).show();
+        copyValue("GAID", gaidValue, "GAID is not available on this device");
+    }
+
+    private void copySelectedAppsFlyerId() {
+        copyValue("AppsFlyer ID", selectedAppsFlyerId,
+                "Select a game with an AppsFlyer ID first");
+    }
+
+    private void copyFullExport() {
+        copyValue("GAID|ID|AID|UA", selectedFullExport,
+                "Complete export unavailable: check GAID and selected game data");
+    }
+
+    private void copyValue(String label, String value, String missingMessage) {
+        if (TextUtils.isEmpty(value)) {
+            Toast.makeText(this, missingMessage, Toast.LENGTH_SHORT).show();
             return;
         }
         ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-        cm.setPrimaryClip(ClipData.newPlainText("GAID", gaidValue));
-        Toast.makeText(this, "Device GAID copied", Toast.LENGTH_SHORT).show();
+        cm.setPrimaryClip(ClipData.newPlainText(label, value));
+        Toast.makeText(this, label + " copied", Toast.LENGTH_SHORT).show();
     }
 
     private void loadApps() {
@@ -209,17 +387,27 @@ public class MainActivity extends Activity {
             if (isFinishing() || isDestroyed()) return;
             items.clear();
             items.addAll(out);
+            if (selectedItem != null) {
+                for (Item candidate : out) {
+                    if (candidate.pkg.equals(selectedItem.pkg)) {
+                        selectedItem = candidate;
+                        break;
+                    }
+                }
+            }
             adapter.notifyDataSetChanged();
+            renderSelection();
         });
 
-        // Inspect installed APK DEX files on the background executor. This only
-        // identifies SDK code bundled in an APK; it does not read app data.
+        // Identify attribution SDK signatures in the public APK code, separately from
+        // the local Root-based preference-file scan initiated by the user.
         for (Item item : out) {
             item.detectedProviders = SdkScanner.scan(item.sourceDir, item.splitSourceDirs);
         }
         runOnUiThread(() -> {
             if (!isFinishing() && !isDestroyed() && adapter != null) {
                 adapter.notifyDataSetChanged();
+                renderSelection();
             }
         });
     }
@@ -227,39 +415,7 @@ public class MainActivity extends Activity {
     private String getCategory(ApplicationInfo ai) {
         if (Build.VERSION.SDK_INT < 26) return "UNKNOWN";
         if (ai.category == ApplicationInfo.CATEGORY_GAME) return "GAME";
-        // Android exposes a single explicit GAME category; other visible launcher
-        // applications are grouped as APP. UNKNOWN is reserved for unavailable metadata.
         return "APP";
-    }
-
-    private void onAppTap(Item it) {
-        Map<String, String> records = store.getForPackage(it.pkg);
-        if (records.size() == 1) {
-            String provider = records.keySet().iterator().next();
-            copyRecord(it.pkg, provider);
-        } else if (records.size() > 1) {
-            Toast.makeText(this, "Tap a provider label below the icon", Toast.LENGTH_SHORT).show();
-        } else if (!it.rootProviders.isEmpty()) {
-            Toast.makeText(this, "Provider files found, but no readable ID value was extracted",
-                    Toast.LENGTH_LONG).show();
-        } else if (!it.detectedProviders.isEmpty()) {
-            Toast.makeText(this, "SDK detected in APK; no ID record was found",
-                    Toast.LENGTH_LONG).show();
-        } else {
-            Toast.makeText(this, "No supported SDK signature detected", Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    private void copyRecord(String pkg, String provider) {
-        String rec = store.get(pkg, provider);
-        if (rec == null) {
-            Toast.makeText(this, "No diagnostic data", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-        ClipData clip = ClipData.newPlainText("", rec);
-        cm.setPrimaryClip(clip);
-        Toast.makeText(this, "Copied " + Provider.displayName(provider), Toast.LENGTH_SHORT).show();
     }
 
     private void scanWithRoot() {
@@ -276,8 +432,8 @@ public class MainActivity extends Activity {
         }
 
         rootStatus.setText("ROOT SCAN: WAITING FOR APPROVAL");
-        rootStatus.setTextColor(ACCENT);
-        rootButton.setText("SCANNING...");
+        rootStatus.setTextColor(GOLD);
+        rootButton.setText("SCANNING…");
         rootButton.setEnabled(false);
 
         io.execute(() -> {
@@ -294,8 +450,7 @@ public class MainActivity extends Activity {
             }
 
             if (!report.rootAvailable) {
-                String message = "ROOT ACCESS DENIED";
-                runOnUiThread(() -> finishRootScan(message, Color.rgb(230, 95, 85)));
+                runOnUiThread(() -> finishRootScan("ROOT ACCESS DENIED", Color.rgb(230, 95, 85)));
                 return;
             }
 
@@ -322,17 +477,18 @@ public class MainActivity extends Activity {
 
             int finalSavedValues = savedValues;
             int finalProviderFiles = providerFiles;
-            String status = "ROOT AVAILABLE  |  " + report.scannedPackages
-                    + " APPS  |  " + finalSavedValues + " IDS";
+            String status = "ROOT AVAILABLE  •  " + report.scannedPackages
+                    + " APPS  •  " + finalSavedValues + " IDS";
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;
                 rootStatus.setText(status);
-                rootStatus.setTextColor(Color.rgb(85, 190, 115));
-                rootButton.setText("SCAN AGAIN");
+                rootStatus.setTextColor(GREEN);
+                rootButton.setText("SCAN AGAIN  ›");
                 rootButton.setEnabled(true);
                 if (adapter != null) adapter.notifyDataSetChanged();
+                renderSelection();
                 Toast.makeText(MainActivity.this,
-                        finalSavedValues + " values saved; " + finalProviderFiles
+                        finalSavedValues + " values saved • " + finalProviderFiles
                                 + " provider files found locally",
                         Toast.LENGTH_LONG).show();
             });
@@ -343,7 +499,7 @@ public class MainActivity extends Activity {
         if (isFinishing() || isDestroyed()) return;
         rootStatus.setText(status);
         rootStatus.setTextColor(color);
-        rootButton.setText("SCAN WITH ROOT");
+        rootButton.setText("SCAN ROOT  ›");
         rootButton.setEnabled(true);
     }
 
@@ -355,6 +511,24 @@ public class MainActivity extends Activity {
     @Override protected void onDestroy() {
         super.onDestroy();
         io.shutdownNow();
+    }
+
+    private int dp(float value) {
+        return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    private Drawable rounded(int color, int strokeColor, float radiusPx) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(color);
+        drawable.setCornerRadius(radiusPx);
+        if (strokeColor != Color.TRANSPARENT) drawable.setStroke(dp(1), strokeColor);
+        return drawable;
+    }
+
+    private Drawable ripple(int color, int strokeColor, float radiusPx) {
+        GradientDrawable content = (GradientDrawable) rounded(color, strokeColor, radiusPx);
+        return new RippleDrawable(ColorStateList.valueOf(Color.argb(48, 236, 190, 104)),
+                content, null);
     }
 
     private final class Adapter extends BaseAdapter {
@@ -377,17 +551,22 @@ public class MainActivity extends Activity {
                 cell.setPadding((int) (2 * d), (int) (3 * d), (int) (2 * d), (int) (3 * d));
             }
 
-            Item it = items.get(pos);
+            Item item = items.get(pos);
+            boolean selected = selectedItem != null && selectedItem.pkg.equals(item.pkg);
+            cell.setBackground(selected
+                    ? rounded(Color.rgb(28, 25, 19), Color.rgb(120, 91, 43), dp(9))
+                    : rounded(Color.TRANSPARENT, Color.TRANSPARENT, dp(9)));
+
             ImageView img = new ImageView(MainActivity.this);
             img.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            img.setImageDrawable(it.icon);
-            img.setContentDescription(it.label);
-            int iconSize = (int) (52 * d);
+            img.setImageDrawable(item.icon);
+            img.setContentDescription(item.label);
+            int iconSize = (int) (50 * d);
             cell.addView(img, new LinearLayout.LayoutParams(iconSize, iconSize));
 
             TextView category = new TextView(MainActivity.this);
-            category.setText(it.category);
-            category.setTextColor(ACCENT);
+            category.setText(item.category);
+            category.setTextColor(selected ? GOLD : Color.rgb(210, 161, 65));
             category.setTextSize(9);
             category.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
             category.setGravity(Gravity.CENTER);
@@ -395,47 +574,31 @@ public class MainActivity extends Activity {
             cell.addView(category, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-            Map<String, String> records = store.getForPackage(it.pkg);
+            Map<String, String> records = store.getForPackage(item.pkg);
             List<String> providersToShow = new ArrayList<>();
             for (String provider : Provider.ORDERED) {
-                if (it.detectedProviders.contains(provider) || it.rootProviders.contains(provider)
+                if (item.detectedProviders.contains(provider) || item.rootProviders.contains(provider)
                         || records.containsKey(provider)) {
                     providersToShow.add(provider);
                 }
             }
             if (records.containsKey(Provider.LEGACY)) providersToShow.add(Provider.LEGACY);
 
-            img.setAlpha(providersToShow.isEmpty() ? 0.50f : 1f);
+            img.setAlpha(providersToShow.isEmpty() ? 0.62f : 1f);
             for (String provider : providersToShow) {
                 TextView tag = new TextView(MainActivity.this);
                 tag.setText(Provider.displayName(provider));
                 tag.setTextColor(records.containsKey(provider)
-                        ? FG : Color.rgb(110, 190, 225));
+                        ? FG : BLUE);
                 tag.setTextSize(8);
                 tag.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
                 tag.setGravity(Gravity.CENTER);
                 tag.setSingleLine(true);
                 tag.setEllipsize(TextUtils.TruncateAt.END);
                 tag.setPadding((int) (2 * d), 0, (int) (2 * d), 0);
-                if (records.containsKey(provider)) {
-                    tag.setOnClickListener(v -> copyRecord(it.pkg, provider));
-                    tag.setContentDescription(Provider.displayName(provider) + ", diagnostic record available; tap to copy");
-                } else if (it.rootProviders.contains(provider)) {
-                    tag.setContentDescription(Provider.displayName(provider)
-                            + " preference file found; no ID value available to copy");
-                    tag.setOnClickListener(v -> {
-                        String message = Provider.ADJUST.equals(provider)
-                                ? "Adjust file found; the reference APK does not extract an Adjust ID"
-                                : "Preference file found, but no ID value was present";
-                        Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show();
-                    });
-                } else {
-                    tag.setContentDescription(Provider.displayName(provider)
-                            + " SDK detected in installed APK; no ID record available");
-                    tag.setOnClickListener(v -> Toast.makeText(MainActivity.this,
-                            Provider.displayName(provider) + " found in APK code; no ID record available",
-                            Toast.LENGTH_SHORT).show());
-                }
+                tag.setOnClickListener(v -> onAppTap(item));
+                tag.setContentDescription(Provider.displayName(provider)
+                        + " detected; tap to select app");
                 cell.addView(tag, new LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, (int) (16 * d)));
             }
